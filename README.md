@@ -59,12 +59,18 @@ By default, the MCP server uses a local SearXNG instance at http://localhost:808
 
 ### Running SearXNG Locally
 
-You can run your own SearXNG instance using Docker:
+The project includes a complete Docker Compose setup that runs both SearXNG and the MCP server:
+
 ```
 docker-compose up -d
 ```
 
-This will start a local SearXNG instance at http://localhost:8080 using the included docker-compose.yml file.
+This will:
+1. Start a SearXNG instance at http://localhost:8080
+2. Start the SearXNG MCP server at http://localhost:7870
+3. Configure them to work together automatically
+
+The docker-compose.yml file includes all necessary configuration and volume mappings.
 
 ## MCP Integration
 
@@ -90,16 +96,26 @@ This project includes VS Code tasks for easy execution:
 
 ### Docker Support
 
-The project includes Docker support for easy deployment:
+The project includes Docker Compose support for easy deployment:
 
-1. Build the Docker image:
+1. Start both SearXNG and the MCP server with a single command:
    ```
-   docker build -t searxng-mcp-server .
+   docker-compose up -d
    ```
 
-2. Run the container:
+2. To stop all services:
    ```
-   docker run -p 7870:7870 searxng-mcp-server
+   docker-compose down
+   ```
+
+3. To rebuild after making changes:
+   ```
+   docker-compose up -d --build
+   ```
+
+4. To view logs:
+   ```
+   docker-compose logs -f
    ```
 
 ## License
