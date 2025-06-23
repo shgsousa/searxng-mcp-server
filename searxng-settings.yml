@@ -1,0 +1,110 @@
+# SearXNG settings
+
+general:
+    debug: false
+    instance_name: "SearXNG"
+
+search:
+    safe_search: 0
+    autocomplete: ""
+    default_lang: ""
+    ban_time_on_fail: 5
+    max_ban_time_on_fail: 120
+    suspended_times:
+        SearxEngineAccessDenied: 86400
+        SearxEngineCaptcha: 86400
+        SearxEngineTooManyRequests: 3600
+        cf_SearxEngineCaptcha: 1296000
+        cf_SearxEngineAccessDenied: 86400
+        recaptcha_SearxEngineCaptcha: 604800
+    formats:
+        - html
+        - json
+
+server:
+    secret_key: "cd75269e-6251-4d30-bd95-c144a9106a27" # Required for session management
+    bind_address: "0.0.0.0"
+    port: 8080
+    dev_mode: false
+    image_proxy: false
+    limiter: false
+    http_headers_enabled: false
+    method: "POST"
+    default_http_headers:
+        X-Content-Type-Options: nosniff
+        X-XSS-Protection: 1; mode=block
+        X-Download-Options: noopen
+        X-Robots-Tag: noindex, nofollow
+        Referrer-Policy: no-referrer
+    request_timeout: 3.0
+    base_url: False
+    themes_path: ""
+    default_theme: simple
+    useragent_suffix: ""    
+    disabled_themes: []
+    api_version: 1
+    tokens: []
+
+ui:
+    static_use_min: true
+    default_locale: ""
+    query_in_title: false
+    infinite_scroll: false
+    center_alignment: false
+    cache_url: "/static"
+    default_theme: simple
+    theme_args:
+        simple_style: auto
+    theme_color:
+        detect_color: true
+        light_theme_color: "#636363"
+        dark_theme_color: "#070707"
+    results_on_new_tab: false
+    advanced_search: false
+    notifications: false
+    query_autocomplete: false
+
+outgoing:
+    request_timeout: 3.0
+    enable_http2: true
+    useragent_suffix: ""
+    pool_connections: 100
+    pool_maxsize: 10
+    max_redirects_per_request: 30
+    using_tor_proxy: false
+    source_ips: []
+
+doi_resolvers:
+    oadoi.org: 'https://oadoi.org/'
+    doi.org: 'https://doi.org/'
+    doai.io: 'https://doai.io/'
+    sci-hub.se: 'https://sci-hub.se/'
+
+default_doi_resolver: 'oadoi.org'
+
+engines:
+    - name: google
+      engine: google
+      shortcut: g
+      use_mobile_ui: false
+    - name: bing
+      engine: bing
+      shortcut: bi
+    - name: brave
+      engine: brave
+      shortcut: br
+    - name: duckduckgo
+      engine: duckduckgo
+      shortcut: ddg
+    - name: yahoo
+      engine: yahoo
+      shortcut: yh
+    - name: qwant
+      engine: qwant
+      shortcut: qw
+      categories: general
+      timeout: 3.0
+      qwant_categ: general
+    - name: startpage
+      engine: startpage
+      shortcut: sp

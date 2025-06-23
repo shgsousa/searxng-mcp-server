@@ -1,0 +1,14 @@
+[project]
+name = "searxng-mcp-server"
+version = "0.1.0"
+description = "A Gradio MCP server for SearXNG"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gradio>=4.16.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.2",
+    "html2text>=2020.1.16",
+    "markdown>=3.4.4",
+    "antml-mcp",
+]

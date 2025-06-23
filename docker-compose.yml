@@ -1,0 +1,50 @@
+services:
+  # SearXNG service
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./searxng-settings.yml:/etc/searxng/settings.yml
+      - ./limiter.toml:/etc/searxng/limiter.toml
+    ports:
+      - "8080:8080"
+    environment:
+      - INSTANCE_NAME=SearXNG
+      - BASE_URL=http://192.168.86.100:8080/
+      - MORTY_URL=
+      - MORTY_KEY=
+      - SEARXNG_SECRET_KEY=cd75269e-6251-4d30-bd95-c144a9106a27
+      - SEARXNG_HOSTNAME=0.0.0.0
+      - SEARXNG_PORT=8080
+      - SEARXNG_HTTP_HEADERS_ENABLED=false
+      - SEARXNG_LIMITER=false
+      - SEARXNG_REDIS_URL=
+    networks:
+      - searxng-network
+
+  # SearXNG MCP Server service
+  searxng-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - USE_UV=true
+    container_name: searxng-mcp-server
+    restart: unless-stopped
+    ports:
+      - "7870:7870"
+    depends_on:
+      - searxng
+    networks:
+      - searxng-network
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+
+networks:
+  searxng-network:
+    driver: bridge
+
+volumes:
+  searxng-data:
