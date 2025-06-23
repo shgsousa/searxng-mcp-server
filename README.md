@@ -43,6 +43,10 @@ A Model Context Protocol (MCP) server for SearXNG that provides a Gradio interfa
 
 ## Configuration
 
+The server supports configuration through environment variables or a `.env` file:
+
+### Core Configuration
+
 By default, the MCP server uses a local SearXNG instance at http://localhost:8080. To use a different SearXNG instance:
 
 1. Option 1: Set the `SEARXNG_URL` environment variable
@@ -52,9 +56,25 @@ By default, the MCP server uses a local SearXNG instance at http://localhost:808
    python main.py
    ```
 
-2. Option 2: Edit the `config.py` file
+2. Option 2: Create a `.env` file in the project root (you can use `.env.example` as a template)
+   ```
+   SEARXNG_URL=https://your-searxng-instance.com
+   ```
+
+3. Option 3: Edit the `config.py` file
    ```python
    SEARXNG_URL = "https://your-searxng-instance.com"
+   ```
+
+### LLM Features Configuration
+
+LLM features (like content summarization) require OpenAI API credentials:
+
+1. Set the following environment variables in your `.env` file:
+   ```
+   OPENAI_API_URL=https://api.openai.com/v1
+   OPENAI_API_TOKEN=your_api_key_here
+   OPENAI_MODEL=gpt-4o-mini  # Optional, defaults to gpt-3.5-turbo
    ```
 
 ### Running SearXNG Locally
@@ -82,6 +102,7 @@ The server is MCP-enabled through Gradio's launch function, allowing it to be in
 - requests: HTTP client for API calls
 - beautifulsoup4: HTML parsing
 - html2text: HTML to Markdown conversion
+- python-dotenv: Environment variable management
 - markdown: Markdown processing
 - antml-mcp: Model Context Protocol integration
 

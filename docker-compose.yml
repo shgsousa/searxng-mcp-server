@@ -23,7 +23,6 @@ services:
       - SEARXNG_REDIS_URL=
     networks:
       - searxng-network
-
   # SearXNG MCP Server service
   searxng-mcp-server:
     build:
@@ -40,7 +39,8 @@ services:
     networks:
       - searxng-network
     environment:
-      - SEARXNG_URL=http://searxng:8080
+      - SEARXNG_URL=http://searxng:8080  # Important: use container name when in Docker
+      # - DEBUG=true  # Uncomment for verbose logging
 
 networks:
   searxng-network:

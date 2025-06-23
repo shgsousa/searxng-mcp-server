@@ -28,23 +28,78 @@ def validate_searxng_instance(url: str) -> Tuple[bool, str]:
     
     # Add scheme if missing
     if not (url.startswith('http://') or url.startswith('https://')):
-        url = 'https://' + url
+        # Try http first for local/docker instances
+        url = 'http://' + url
     
     # Remove trailing slash
     url = url.rstrip('/')
     
+    logger.debug(f"Validating SearXNG instance at {url}")
+    
     try:
         # Try to access the instance
-        response = requests.get(f"{url}/", timeout=5)
-        response.raise_for_status()
+        try:
+            response = requests.get(f"{url}/", timeout=5)
+            response.raise_for_status()
+            logger.debug(f"Basic connection to {url} successful")
+        except Exception as e:
+            # If the base URL fails, maybe we need https instead of http
+            if url.startswith('http://'):
+                https_url = 'https://' + url[7:]
+                logger.debug(f"Trying HTTPS URL instead: {https_url}")
+                try:
+                    response = requests.get(f"{https_url}/", timeout=5)
+                    response.raise_for_status()
+                    url = https_url
+                    logger.debug(f"HTTPS connection successful, using {url}")
+                except Exception:
+                    # Both failed, report the original error
+                    logger.error(f"Failed to connect to {url}: {str(e)}")
+                    return False, f"Could not connect to SearXNG instance: {str(e)}"
+            else:
+                logger.error(f"Failed to connect to {url}: {str(e)}")
+                return False, f"Could not connect to SearXNG instance: {str(e)}"
         
         # Check for a simple test search to verify it's actually SearXNG
-        test_response = requests.get(f"{url}/search?q=test&format=json", timeout=5)
-        test_response.raise_for_status()
+        # Try both GET and POST methods
+        test_successful = False
+        error_message = ""
         
-        # Check if the response has a SearXNG-like structure
-        data = test_response.json()
-        if 'results' in data:
+        try:
+            # Try GET first
+            logger.debug(f"Trying GET search to validate {url}")
+            test_response = requests.get(f"{url}/search?q=test&format=json", timeout=5)
+            test_response.raise_for_status()
+            
+            # Check if the response has a SearXNG-like structure
+            data = test_response.json()
+            if 'results' in data:
+                logger.info(f"Successfully validated SearXNG instance at {url} via GET")
+                test_successful = True
+        except Exception as e:
+            error_message = f"GET validation failed: {str(e)}"
+            logger.debug(error_message)
+            
+            # If GET fails, try POST
+            try:
+                logger.debug(f"Trying POST search to validate {url}")
+                test_response = requests.post(
+                    f"{url}/search", 
+                    data={"q": "test", "format": "json"}, 
+                    timeout=5
+                )
+                test_response.raise_for_status()
+                
+                # Check if the response has a SearXNG-like structure
+                data = test_response.json()
+                if 'results' in data:
+                    logger.info(f"Successfully validated SearXNG instance at {url} via POST")
+                    test_successful = True
+            except Exception as post_e:
+                error_message = f"Both GET and POST validation failed. GET: {str(e)}, POST: {str(post_e)}"
+                logger.debug(error_message)
+        
+        if test_successful:
             logger.info(f"Successfully validated SearXNG instance at {url}")
             return True, url
         else:
