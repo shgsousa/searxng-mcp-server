@@ -39,19 +39,70 @@ def perform_search(
     max_results: int = MAX_RESULTS
 ) -> Dict[str, Any]:
     """
-    Perform a search using SearXNG
+    Perform a comprehensive web search using SearXNG with advanced filtering options.
+    
+    This function serves as the main search endpoint for the Gradio interface, providing
+    flexible search capabilities with multiple output formats and content processing options.
     
     Args:
-        query: The search query
-        engine: The search engine to use
-        format_type: "summary" for text summary, "full" for full page content, 
-                     "full_with_ai_summary" for full page content with AI summarization
-        time_range: Time range for results (day, week, month, year)
-        language: Language filter for results
-        safesearch: Safe search level (0=off, 1=moderate, 2=strict)        
-        custom_searxng_url: Custom SearXNG instance URL (overrides config)        
+        query (str): The search terms or question to search for. Cannot be empty.
+        engine (str, optional): The search engine backend to use. Defaults to configured 
+            DEFAULT_ENGINE. Available options defined in SEARCH_ENGINES config.
+        format_type (str, optional): Output format for search results:
+            - "summary": Returns basic result information (title, URL, snippet) - fastest
+            - "full": Fetches and includes complete webpage content for each result
+            - "full_with_ai_summary": Fetches content and replaces with AI-generated summaries
+            Defaults to "summary".
+        time_range (str, optional): Temporal filter for search results:
+            - "day": Results from the last 24 hours
+            - "week": Results from the last 7 days  
+            - "month": Results from the last 30 days
+            - "year": Results from the last 365 days
+            - None or "": No time filtering (default)
+        language (str, optional): Language code for result filtering. Defaults to "all".
+            Supported: "all", "en", "es", "fr", "de", "it", "pt", etc.
+        safesearch (str, optional): Content filtering level:
+            - "Off": No content filtering (default)  
+            - "Moderate": Filter explicit content moderately
+            - "Strict": Strict content filtering
+        custom_searxng_url (str, optional): Override the default SearXNG instance URL.
+            Must be a valid HTTP/HTTPS URL. If provided, the instance will be validated
+            before use. Defaults to None (uses configured SEARXNG_URL).
+        max_results (int, optional): Maximum number of results to return and process.
+            Must be between 1 and MAX_RESULTS. Defaults to MAX_RESULTS config value.
+            
     Returns:
-        Search results as a dictionary (or error dictionary if something goes wrong)
+        Dict[str, Any]: Search results dictionary containing:
+            - For successful searches:
+                - "results": List of result dictionaries with title, url, content
+                - "number_of_results": Actual count of returned results
+                - Additional metadata from SearXNG (query info, suggestions, etc.)
+            - For errors:
+                - "status": "error"
+                - "message": Human-readable error description
+                
+    Raises:
+        No exceptions are raised directly. All errors are caught and returned as 
+        error dictionaries in the response.
+        
+    Examples:
+        Basic search:
+        >>> perform_search("python programming")
+        
+        Advanced search with full content:
+        >>> perform_search(
+        ...     query="machine learning tutorials",
+        ...     engine="google", 
+        ...     format_type="full",
+        ...     time_range="month",
+        ...     language="en",
+        ...     max_results=5
+        ... )
+        
+    Note:
+        - AI summarization requires valid OPENAI_API_TOKEN configuration
+        - Full content fetching may be slower due to additional HTTP requests
+        - Custom SearXNG URLs are validated for basic connectivity before use
     """
     # Use custom URL if provided
     searxng_url = custom_searxng_url if custom_searxng_url else SEARXNG_URL
@@ -494,14 +545,61 @@ def extract_web_content(url: str, response: requests.Response) -> tuple[str, Opt
 
 def scrape_webpage(url: str, summarize: bool = False) -> Dict[str, Any]:
     """
-    Scrapes content from a given URL and returns it as formatted markdown.
+    Extract and process content from any webpage with optional AI summarization.
+    
+    This function serves as a web scraping endpoint for the Gradio interface, capable of
+    fetching webpage content, cleaning HTML markup, and optionally generating AI summaries.
+    The scraper intelligently handles different website types (Wikipedia, tech blogs, etc.)
+    to extract the most relevant content while filtering out navigation, ads, and boilerplate.
     
     Args:
-        url: The URL of the webpage to scrape
-        summarize: Whether to summarize the content using AI
-        
+        url (str): The target webpage URL to scrape. Can include or omit the protocol
+            (https:// will be automatically prepended if missing). Must be a valid,
+            accessible web URL.
+        summarize (bool, optional): Whether to generate an AI-powered summary of the
+            scraped content using the configured OpenAI/OpenRouter API. Defaults to False.
+            When True, returns only the AI summary instead of the full content.
+            
     Returns:
-        The webpage content as formatted markdown
+        Dict[str, Any]: Scraping results dictionary containing:
+            - For successful scraping:
+                - "url": The final URL that was scraped (with protocol)
+                - "summarize": Boolean indicating if summarization was requested
+                - "content": The extracted content as formatted markdown text, or
+                           AI summary if summarize=True
+            - For errors:
+                - "status": "error" 
+                - "message": Human-readable error description
+                
+    Content Processing:
+        - HTML is converted to clean markdown format preserving structure
+        - Scripts, styles, and other non-content elements are removed
+        - Navigation, ads, footers, and sidebars are filtered out
+        - Special handling for Wikipedia and technical blog sites
+        - Links and important formatting are preserved in markdown
+        
+    AI Summarization:
+        - Requires valid OPENAI_API_TOKEN in configuration
+        - Generates comprehensive summaries focusing on main ideas
+        - Approximately 30% of original length or shorter for very long content
+        - Preserves key facts, statistics, and important details
+        - Well-structured with appropriate headings
+        
+    Examples:
+        Basic webpage scraping:
+        >>> scrape_webpage("https://example.com/article")
+        
+        Scraping with AI summarization:
+        >>> scrape_webpage("https://blog.example.com/long-article", summarize=True)
+        
+        Auto-protocol handling:
+        >>> scrape_webpage("wikipedia.org/wiki/Python")  # https:// added automatically
+        
+    Note:
+        - Some websites may block automated requests or require JavaScript
+        - Very large pages may be truncated to avoid excessive processing time
+        - AI summarization adds processing time and requires API token configuration
+        - The function respects robots.txt where possible but is not guaranteed
     """
     if not url:
         return format_error("No URL provided.")
@@ -527,13 +625,63 @@ def scrape_webpage(url: str, summarize: bool = False) -> Dict[str, Any]:
 
 def test_searxng_connection(custom_searxng_url: Optional[str] = None) -> str:
     """
-    Test the connection to the SearXNG instance and return diagnostic information.
+    Perform comprehensive diagnostics on SearXNG instance connectivity and functionality.
+    
+    This function serves as a diagnostic endpoint for the Gradio interface, testing
+    various aspects of SearXNG instance connectivity, API compatibility, and search
+    functionality. It provides detailed troubleshooting information to help identify
+    and resolve configuration issues.
     
     Args:
-        custom_searxng_url: Optional custom SearXNG URL to test
-        
+        custom_searxng_url (str, optional): Alternative SearXNG instance URL to test
+            instead of the default configured instance. Must be a complete URL with
+            protocol (e.g., "http://localhost:8080" or "https://searx.example.com").
+            If None, tests the SEARXNG_URL from configuration. Defaults to None.
+            
     Returns:
-        Diagnostic information as a formatted string
+        str: Comprehensive diagnostic report as formatted markdown text containing:
+            - Test execution timestamp and target URL
+            - Basic connectivity test results (HTTP status, headers)
+            - GET search functionality test with JSON format validation
+            - POST search functionality test  
+            - Response structure validation (presence of 'results' key)
+            - Detailed troubleshooting tips and common solutions
+            - Environment-specific guidance (Docker vs local setup)
+            
+    Test Coverage:
+        1. **Basic Connection**: Tests HTTP connectivity to the root endpoint
+           - Validates server is reachable and responding
+           - Reports HTTP status code and content type
+           
+        2. **GET Search Method**: Tests search functionality via GET requests
+           - Performs test query with JSON format requirement
+           - Validates response structure and JSON parsing
+           
+        3. **POST Search Method**: Tests search functionality via POST requests  
+           - Important for compatibility with different SearXNG configurations
+           - Some instances may prefer POST over GET for search requests
+           
+    Troubleshooting Guidance:
+        - Docker networking configuration tips
+        - Local development setup verification
+        - CORS and firewall issue identification
+        - URL format and endpoint validation
+        
+    Examples:
+        Test default configured instance:
+        >>> test_searxng_connection()
+        
+        Test custom instance:
+        >>> test_searxng_connection("http://my-searxng:8080")
+        
+        Test public instance:
+        >>> test_searxng_connection("https://searx.example.com")
+        
+    Note:
+        - All network operations have 5-second timeouts to prevent hanging
+        - Does not perform actual web searches, only tests API endpoints
+        - Results are formatted for easy reading in the Gradio interface
+        - Safe to run repeatedly without side effects on the SearXNG instance
     """
     # Use custom URL if provided, otherwise use the configured one
     searxng_url = custom_searxng_url if custom_searxng_url else SEARXNG_URL
@@ -599,10 +747,38 @@ def test_searxng_connection(custom_searxng_url: Optional[str] = None) -> str:
 
 def get_datetime() -> str:
     """
-    Returns the current date and time in a formatted string.
+    Retrieve the current system date and time in a human-readable format.
     
+    This function serves as a simple utility endpoint for the Gradio interface,
+    providing current timestamp information that can be useful for logging,
+    timestamping search results, or general reference purposes.
+    
+    Args:
+        None
+        
     Returns:
-        str: Current date and time
+        str: Current date and time formatted as markdown text containing:
+            - Day of the week (e.g., "Monday")
+            - Month name (e.g., "January") 
+            - Day of the month with appropriate suffix
+            - Full year (4 digits)
+            - Time in 12-hour format with AM/PM designation
+            - Formatted with markdown header for display consistency
+            
+    Format:
+        The returned string follows the pattern:
+        "## Current Date and Time\n\n{Weekday, Month DD, YYYY HH:MM:SS AM/PM}"
+        
+    Examples:
+        >>> get_datetime()
+        "## Current Date and Time\n\nMonday, June 24, 2025 03:45:30 PM"
+        
+    Note:
+        - Uses the system's local timezone setting
+        - Time format is consistent with common US conventions (12-hour with AM/PM)
+        - Result is formatted as markdown for optimal display in Gradio interface
+        - Function execution is logged for debugging purposes
+        - Lightweight operation with minimal processing overhead
     """
     now = datetime.now()
     formatted_datetime = now.strftime("%A, %B %d, %Y %I:%M:%S %p")
@@ -611,7 +787,57 @@ def get_datetime() -> str:
 
 # Define Gradio interface
 def create_interface():
-    """Create a Gradio Interface for the SearXNG search functionality"""
+    """
+    Create and configure the main Gradio interface for SearXNG web search functionality.
+    
+    This function constructs the primary user interface for the SearXNG MCP server,
+    defining all input controls, output formats, and interface configuration. It
+    serves as the main entry point for users to interact with the search capabilities
+    through a web-based GUI.
+    
+    Interface Components:
+        Input Controls:
+            - Search Query: Multi-line text input for search terms
+            - Search Engine: Dropdown selector for backend search engines
+            - Result Format: Radio buttons for output format selection
+            - Time Range: Dropdown for temporal result filtering
+            - Language: Dropdown for language-based filtering
+            - SafeSearch: Radio buttons for content filtering level
+            - Custom SearXNG URL: Optional text input for instance override
+            - Max Results: Slider for limiting result count
+            
+        Output:
+            - JSON display of formatted search results with syntax highlighting
+            
+    Configuration:
+        - Title: "SearXNG Search"
+        - Theme: Default Gradio theme
+        - API Name: "search" (for programmatic access)
+        - Comprehensive help documentation and usage examples
+        
+    Returns:
+        gr.Interface: Configured Gradio interface object ready for launching.
+            The interface is bound to the perform_search function and includes
+            all necessary input validation and output formatting.
+            
+    Features:
+        - Real-time input validation and help text
+        - Responsive design adapting to different screen sizes  
+        - Detailed usage instructions and examples
+        - API endpoint generation for programmatic access
+        - Error handling and user-friendly error messages
+        
+    Usage:
+        This function is typically called once during server initialization:
+        >>> interface = create_interface()
+        >>> interface.launch()
+        
+    Note:
+        - Interface configuration is pulled from GRADIO_SETTINGS and other config values
+        - Input validation is handled by the underlying perform_search function
+        - The interface supports both interactive web use and API access
+        - All search engines and options are dynamically loaded from configuration
+    """
     
     # Define inputs
     inputs = [
