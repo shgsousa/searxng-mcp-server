@@ -5,6 +5,7 @@ Utility functions for the SearXNG MCP server.
 import logging
 import requests
 from typing import Dict, Any, Optional, Tuple
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(
@@ -111,7 +112,7 @@ def validate_searxng_instance(url: str) -> Tuple[bool, str]:
         return False, f"Could not connect to SearXNG instance: {str(e)}"
 
 
-def format_error(error_message: str) -> str:
+def format_error(error_message: str) -> Dict[str, Any]:
     """
     Formats an error message for display in the Gradio interface.
     
@@ -121,7 +122,7 @@ def format_error(error_message: str) -> str:
     Returns:
         Formatted error message
     """
-    return f"""
+    detailed_error_message =     f"""
 ## Error Occurred
 
 {error_message}
@@ -133,3 +134,25 @@ def format_error(error_message: str) -> str:
 3. Try using a different search engine or query
 4. If using a custom instance, ensure the URL is correct
 """
+
+    return {
+        "status": "error",
+        "message": error_message,
+        "detailed_message": detailed_error_message
+    }
+
+def fetch_page_content(url: str) -> Optional[str]:
+    headers = {
+        'User-Agent': 'Mozilla/5.0'  # Helps avoid getting blocked by some sites
+    }
+
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Extract just the text content
+        return soup.get_text()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {url}: {e}")
+        return None

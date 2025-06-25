@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union
+import openai
 
 # Import configuration and utilities
 from config import (
@@ -19,7 +20,8 @@ from config import (
     OPENAI_API_TOKEN,
     OPENAI_MODEL
 )
-from utils import logger, validate_searxng_instance, format_error
+from utils import logger, validate_searxng_instance, format_error, fetch_page_content
+import copy
 
 # Configure html2text for global use
 text_maker = html2text.HTML2Text()
@@ -35,7 +37,7 @@ def perform_search(
     safesearch: str = "Off",
     custom_searxng_url: Optional[str] = None,
     max_results: int = MAX_RESULTS
-) -> str:
+) -> Dict[str, Any]:
     """
     Perform a search using SearXNG
     
@@ -46,11 +48,10 @@ def perform_search(
                      "full_with_ai_summary" for full page content with AI summarization
         time_range: Time range for results (day, week, month, year)
         language: Language filter for results
-        safesearch: Safe search level (0=off, 1=moderate, 2=strict)
-        custom_searxng_url: Custom SearXNG instance URL (overrides config)
-        
+        safesearch: Safe search level (0=off, 1=moderate, 2=strict)        
+        custom_searxng_url: Custom SearXNG instance URL (overrides config)        
     Returns:
-        Search results as a formatted string
+        Search results as a dictionary (or error dictionary if something goes wrong)
     """
     # Use custom URL if provided
     searxng_url = custom_searxng_url if custom_searxng_url else SEARXNG_URL
@@ -87,7 +88,7 @@ def perform_search(
         # Try both POST and GET methods
         try:
             response = requests.post(f"{searxng_url}/search", data=params)
-            if response.status_code != 200:
+            if response.status_code < 200 or response.status_code >= 300:
                 # If POST fails, try GET as fallback
                 logger.debug(f"POST request failed, trying GET method")
                 response = requests.get(f"{searxng_url}/search", params=params)
@@ -101,19 +102,19 @@ def perform_search(
         
         if not results.get("results", []):
             logger.info("Search returned no results")
-            return "No results found for your query."
+            return {
+                "status": "error",
+                "message": "No results found for your query."
+            }
         
         # Process results based on format type
         if format_type == "summary":
-            return format_summary(results, max_results)
+            return crop_summary_results(results, max_results)
+            # return format_summary(results, max_results)
         elif format_type == "full_with_ai_summary":
-            # Limit the results before fetching full content to respect max_results
-            limited_results = {"results": results.get("results", [])[:max_results]}
-            return format_full_content_with_ai_summary(limited_results)
+            return full_content_with_ai_summary(results, max_results)
         else:
-            # Limit the results before fetching full content to respect max_results
-            limited_results = {"results": results.get("results", [])[:max_results]}
-            return format_full_content(limited_results)
+            return full_content(results, max_results)
             
     except requests.exceptions.RequestException as e:
         error_msg = f"Error performing search: {str(e)}"
@@ -127,6 +128,27 @@ def perform_search(
         error_msg = f"Unexpected error: {str(e)}"
         logger.exception("Unexpected error during search")
         return format_error(error_msg)
+
+def crop_summary_results(results: Dict[str, Any], max_results: int = MAX_RESULTS) -> Dict[str, Any]:
+    """
+    Crop search results to a maximum number of results.
+    
+    Args:
+        results: A dictionary containing search results with a "results" key
+        max_results: Maximum number of results to return
+        
+    Returns:
+        Cropped results dictionary
+    """
+    # First create a deep copy of the original results to avoid modifying it
+    cropped_results = copy.deepcopy(results)
+    original_count = len(cropped_results.get("results", []))
+    # Now limit the results list to max_results
+    cropped_results["results"] = cropped_results.get("results", [])[:max_results]
+    current_count = len(cropped_results["results"])
+    logger.info(f"Cropped results from {original_count} to {current_count} items")
+    cropped_results["number_of_results"] = current_count
+    return cropped_results
 
 def format_summary(results: Dict[str, Any], max_results: int = MAX_RESULTS) -> str:
     """Format search results as a summary"""
@@ -147,7 +169,7 @@ def format_summary(results: Dict[str, Any], max_results: int = MAX_RESULTS) -> s
             
     return formatted_result
 
-def format_full_content(results: Dict[str, Any]) -> str:
+def full_content(results: Dict[str, Any], max_results: int) -> Dict[str, Any]:
     """
     Retrieves full content from search results.
     
@@ -157,55 +179,44 @@ def format_full_content(results: Dict[str, Any]) -> str:
     Returns:
         Formatted string of full content from each URL
     """
-    formatted_results = "# Full Content Results\n\n"
 
-    for i, result in enumerate(results.get("results", []), 1):
+    # Generate a full copy of the results to avoid modifying the original
+    full_results = copy.deepcopy(results)
+
+    # iterate through the results and fetch full content
+    results_count = 0
+    for i, result in enumerate(full_results.get("results", []), 1):
         url = result.get("url")
         title = result.get("title", "No title")
         
+        # skip results without a URL
         if not url:
-            formatted_results += f"## Result {i}: Error - No URL\n\n---\n\n"
             continue
 
-        # Add a clear header with result number, title and URL
-        formatted_results += f"## Result {i}: {title}\n\n"
-        formatted_results += f"**Source URL:** [{url}]({url})\n\n"
-        formatted_results += "---\n\n"  # Separator after header info
+        # fetch the full content for each URL
+        content = fetch_page_content(url)
+        if not content:
+            logger.warning(f"No content retrieved for URL: {url}. Skipping.")
+            continue
 
-        logger.info(f"Retrieving full content for URL: {url}")
-        try:
-            # Fetch the page content with a realistic user agent
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
-            }
-            response = requests.get(url, timeout=10, headers=headers)
-            response.raise_for_status()
-            
-            # Use the shared helper function to extract content
-            extracted_text, _ = extract_web_content(url, response)
-            
-            logger.info(f"Successfully retrieved and processed content from {url}")
-            formatted_results += f"{extracted_text}\n\n"
-            
-            # Add a more visible end-of-result separator
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error retrieving full content from {url}: {e}")
-            error_message = f"**Error retrieving full content:** {str(e)}\n\n"
-            formatted_results += error_message + "Unable to retrieve full content for this result.\n\n"
-            # Add a more visible end-of-result separator even on error
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
-        except Exception as e:
-            logger.exception(f"Unexpected error processing content from {url}")
-            error_message = f"**Error processing content:** {str(e)}\n\n"
-            formatted_results += error_message + "Unable to process content for this result.\n\n"
-            # Add a more visible end-of-result separator even on error
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
+        # replace the content in the result with the full content
+        result["content"] = content
+
+        # Increment the count of results processed
+        results_count += 1
+
+        # Stop if we've reached the maximum results limit
+        if results_count >= max_results:
+            logger.info(f"Reached maximum results limit of {max_results}. Stopping content retrieval.")
+            break
     
-    return formatted_results
+    # Crop the results to the maximum number of results specified
+    full_results["results"] = full_results.get("results", [])[:max_results]
+    full_results["number_of_results"] = len(full_results.get("results", []))
+    
+    return full_results
 
-def format_full_content_with_ai_summary(results: Dict[str, Any]) -> str:
+def full_content_with_ai_summary(results: Dict[str, Any], max_results: int) -> Dict[str, Any]:
     """
     Retrieves content from search results and creates AI-generated summaries without including the original content.
     
@@ -215,62 +226,20 @@ def format_full_content_with_ai_summary(results: Dict[str, Any]) -> str:
     Returns:
         Formatted string of AI summaries from each URL
     """
-    formatted_results = "# AI-Summarized Search Results\n\n"
-
-    for i, result in enumerate(results.get("results", []), 1):
-        url = result.get("url")
-        title = result.get("title", "No title")
-        
-        if not url:
-            formatted_results += f"## Result {i}: Error - No URL\n\n---\n\n"
-            continue
-
-        # Add a clear header with result number, title and URL
-        formatted_results += f"## Result {i}: {title}\n\n"
-        formatted_results += f"**Source URL:** [{url}]({url})\n\n"
-        formatted_results += "---\n\n"  # Separator after header info
-
-        logger.info(f"Retrieving content for URL: {url}")
-        try:
-            # Fetch the page content with a realistic user agent
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
-            }
-            response = requests.get(url, timeout=10, headers=headers)
-            response.raise_for_status()
-            
-            # Use the shared helper function to extract content
-            extracted_text, _ = extract_web_content(url, response)
-            
-            logger.info(f"Successfully retrieved and processed content from {url}")
-            
-            # Generate AI summary if OpenAI API token is available
-            if OPENAI_API_TOKEN:
-                logger.info(f"Generating AI summary for content from {url}")
-                ai_summary = summarize_content(extracted_text, title, url)
-                formatted_results += ai_summary
-            else:
-                formatted_results += "### AI Summary Not Available\n\n"
-                formatted_results += "**Note:** OpenAI/OpenRouter API token not configured. Please set OPENAI_API_TOKEN in your environment or .env file to enable AI summaries.\n\n"
-                formatted_results += "**Content preview:** " + (extracted_text[:300] + "..." if len(extracted_text) > 300 else extracted_text) + "\n\n"
-            
-            # Add a more visible end-of-result separator
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error retrieving full content from {url}: {e}")
-            error_message = f"**Error retrieving full content:** {str(e)}\n\n"
-            formatted_results += error_message + "Unable to retrieve full content for this result.\n\n"
-            # Add a more visible end-of-result separator even on error
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
-        except Exception as e:
-            logger.exception(f"Unexpected error processing content from {url}")
-            error_message = f"**Error processing content:** {str(e)}\n\n"
-            formatted_results += error_message + "Unable to process content for this result.\n\n"
-            # Add a more visible end-of-result separator even on error
-            formatted_results += "***\n\n" + "=" * 80 + "\n\n"
+    # Expand the results to full content
+    full_results = full_content(results, max_results)
     
-    return formatted_results
+    # Create a deep copy to avoid modifying the original results
+    summarized_results = copy.deepcopy(full_results)
+
+    for i, result in enumerate(summarized_results.get("results", []), 1):
+        # Get the full content for each result
+        content = result.get("content", "")
+        # Generate AI summary if OpenAI API token is available
+        summarized_content = summarize_content(content)
+        # replace the content with the AI summary
+        result["content"] = summarized_content
+    return summarized_results
 
 def extract_web_content(url: str, response: requests.Response) -> tuple[str, Optional[str]]:
     """
@@ -523,7 +492,7 @@ def extract_web_content(url: str, response: requests.Response) -> tuple[str, Opt
     
     return text, title
 
-def scrape_webpage(url: str, summarize: bool = False) -> str:
+def scrape_webpage(url: str, summarize: bool = False) -> Dict[str, Any]:
     """
     Scrapes content from a given URL and returns it as formatted markdown.
     
@@ -543,53 +512,18 @@ def scrape_webpage(url: str, summarize: bool = False) -> str:
     
     logger.info(f"Scraping webpage: {url}, summarize={summarize}")
     
-    try:
-        # Fetch the page content with a realistic user agent
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
-        }
-        response = requests.get(url, timeout=15, headers=headers)
-        response.raise_for_status()
-        
-        # Use the shared helper function to extract content
-        extracted_text, title = extract_web_content(url, response)
-        title = title if title else "No title"
-        
-        logger.info(f"Successfully scraped content from {url}")
-        
-        # If summarize is enabled and we have an API token, summarize the content
-        if summarize and OPENAI_API_TOKEN:
-            logger.info(f"Summarizing content from {url} using AI")
-            return summarize_content(extracted_text, title, url)
-        
-        # Format the output for non-summarized content
-        formatted_content = f"# {title}\n\n"
-        formatted_content += f"**Source URL:** {url}\n\n"
-        formatted_content += f"**Scraped on:** {datetime.now().strftime('%A, %B %d, %Y %I:%M:%S %p')}\n\n"
-        formatted_content += "---\n\n"
-        
-        # Check if we actually got meaningful content
-        if len(extracted_text.strip()) < 100:
-            logger.warning(f"Content extraction produced too little text ({len(extracted_text.strip())} chars)")
-            formatted_content += "**Note: Content extraction yielded minimal results.**\n\n"
-        
-        # If summarize was requested but API token is not available
-        if summarize and not OPENAI_API_TOKEN:
-            formatted_content += "**Note: Content summarization was requested, but no OpenAI/OpenRouter API token is configured.**\n\n"
-            formatted_content += "Please set OPENAI_API_TOKEN in your environment or .env file to enable summarization.\n\n"
-            
-        formatted_content += extracted_text
-        
-        return formatted_content
-    
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Error retrieving content from {url}: {str(e)}"
+    page_content = fetch_page_content(url)
+    if not page_content:
+        error_msg = f"Failed to fetch content from {url}. The page may not exist or is inaccessible."
         logger.error(error_msg)
         return format_error(error_msg)
-    except Exception as e:
-        error_msg = f"Unexpected error processing content from {url}: {str(e)}"
-        logger.exception("Unexpected error during scraping")
-        return format_error(error_msg)
+    if summarize:
+        page_content = summarize_content(page_content)
+    return {
+        "url": url,
+        "summarize": summarize,
+        "content": page_content
+    }
 
 def test_searxng_connection(custom_searxng_url: Optional[str] = None) -> str:
     """
@@ -729,9 +663,8 @@ def create_interface():
             info="Maximum number of results to display"
         )
     ]
-    
-    # Define output
-    output = gr.Markdown(label="Search Results")
+      # Define output
+    output = gr.JSON(label="Search Results")
     
     # Create the interface
     interface = gr.Interface(
@@ -761,27 +694,22 @@ def create_interface():
     
     return interface
 
-def summarize_content(text: str, title: str, url: str) -> str:
+def summarize_content(text: str) -> str:
     """
     Summarize the content of a webpage using OpenAI or OpenRouter API
     
     Args:
         text: The text content to summarize
-        title: The title of the webpage
-        url: The URL of the webpage
         
     Returns:
         A summarized version of the content
     """
     if not OPENAI_API_TOKEN:
         logger.warning("OpenAI/OpenRouter API token not configured. Summarization unavailable.")
-        return format_error("OpenAI/OpenRouter API token not configured. Please set OPENAI_API_TOKEN in your environment or .env file.")
+        return text
     
     # Prepare the prompt
     prompt = f"""Please provide a comprehensive summary of the following web content:
-Title: {title}
-URL: {url}
-
 The summary should:
 1. Focus on the main ideas, findings, and important details
 2. Be well-structured with appropriate headings
@@ -791,77 +719,31 @@ The summary should:
 
 Here's the content to summarize:
 
-{text[:8000]}  # Limit content to ~8000 chars to avoid token limits
+{text[:10000]}  # Limit content to ~10000 chars to avoid token limits
 """
 
-    # Determine if we're using OpenRouter based on the API URL
-    is_openrouter = "openrouter.ai" in OPENAI_API_URL
+    client = openai.OpenAI(base_url=OPENAI_API_URL, api_key=OPENAI_API_TOKEN)
     
-    # Prepare headers based on the API service
-    if is_openrouter:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENAI_API_TOKEN}",
-            "HTTP-Referer": url,  # OpenRouter requires this for attribution
-            "X-Title": "SearXNG MCP Server"  # For OpenRouter usage tracking
-        }
-    else:  # OpenAI
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENAI_API_TOKEN}"
-        }
-    
-    # Construct the API endpoint
-    endpoint = f"{OPENAI_API_URL}/chat/completions"
-    
-    # Prepare the payload
-    payload = {
-        "model": OPENAI_MODEL,
-        "messages": [
+    completion = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
             {"role": "system", "content": "You are a helpful assistant that summarizes web content accurately and concisely."},
             {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,  # Lower temperature for more focused summaries
-        "max_tokens": 1500  # Reasonable limit for summaries
-    }
-    
-    logger.info(f"Sending summarization request for {url} using model {OPENAI_MODEL}")
-    
-    try:
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
-        
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            summary = result["choices"][0]["message"]["content"]
-            logger.info(f"Successfully generated summary for {url} ({len(summary)} chars)")
-            
-            # Format the summary nicely
-            formatted_summary = f"# AI-Generated Summary of {title}\n\n"
-            formatted_summary += f"**Original URL:** {url}\n\n"
-            formatted_summary += f"**Summarized on:** {datetime.now().strftime('%A, %B %d, %Y %I:%M:%S %p')}\n\n"
-            formatted_summary += "---\n\n"
-            formatted_summary += summary
-            formatted_summary += "\n\n---\n\n*Summary generated using AI. Information should be verified from original sources.*\n\n"
-            
-            return formatted_summary
-        else:
-            error_msg = f"Invalid response structure from API"
-            logger.error(f"{error_msg} for {url}: {result}")
-            return format_error(f"Failed to summarize content: {error_msg}")
-            
-    except requests.exceptions.RequestException as e:
-        error_msg = f"API request error: {str(e)}"
-        logger.error(f"Summarization failed for {url}: {error_msg}")
-        return format_error(f"Failed to summarize content: {error_msg}")
-    except json.JSONDecodeError:
-        error_msg = "Invalid JSON response from API"
-        logger.error(f"Summarization failed for {url}: {error_msg}")
-        return format_error(f"Failed to summarize content: {error_msg}")
-    except Exception as e:
-        error_msg = f"Unexpected error: {str(e)}"
-        logger.exception(f"Summarization failed for {url}")
-        return format_error(f"Failed to summarize content: {error_msg}")
+        ]
+    )
+
+    if not completion or not completion.choices or len(completion.choices) == 0:
+        logger.error("No valid response from OpenAI/OpenRouter API")
+        return text
+    else:
+        message_content = completion.choices[0].message.content
+        if not message_content:
+            logger.error("Received empty summary from OpenAI/OpenRouter API")
+            return text
+        # Strip whitespace and return the summary
+        logger.info("AI summarization completed successfully")
+        summary = message_content.strip()
+        return summary
 
 def main():
     logger.info("Starting SearXNG MCP Server")
@@ -919,7 +801,7 @@ def main():
                 info="Uses OpenAI/OpenRouter to generate a concise summary"
             )
         ],
-        outputs=gr.Markdown(label="Scraped Content"),
+        outputs=gr.JSON(label="Scraped Content"),
         title="SearXNG Web Scraper",
         description="Fetch and display content from any webpage.",
         theme="default",
